@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TtmlControl.App/TtmlControl.App.csproj" />
+    <Project Path="src/TtmlControl.Core/TtmlControl.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TtmlControl.Tests/TtmlControl.Tests.csproj" />
+  </Folder>
+</Solution>

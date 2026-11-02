@@ -122,7 +122,20 @@ public static partial class TtmlParser
             End: ParseTime(Attribute(paragraph, "end")),
             Agent: Attribute(paragraph, "agent"),
             Text: CollapseWhitespace(main.ToString()),
-            BackgroundText: CollapseWhitespace(background.ToString()));
+            BackgroundText: CollapseWhitespace(background.ToString()),
+            TimingSignature: BuildTimingSignature(paragraph));
+    }
+
+    // Parsed values, so "00:05.673" and "5.673" count as the same time. Covers every word,
+    // because a retimed word can leave the line's own begin and end untouched.
+    private static string BuildTimingSignature(XElement paragraph)
+    {
+        var times = paragraph.DescendantsAndSelf().SelectMany(e => new[]
+        {
+            ParseTime(Attribute(e, "begin"))?.TotalMilliseconds,
+            ParseTime(Attribute(e, "end"))?.TotalMilliseconds,
+        });
+        return string.Join(',', times.Where(t => t is not null).Select(t => Math.Round(t!.Value).ToString(CultureInfo.InvariantCulture)));
     }
 
     private static void CollectText(XElement element, StringBuilder main, StringBuilder background, bool inBackground)

@@ -35,6 +35,15 @@ public sealed class TrackedFile
     public long ModifiedTicks { get; init; }
     public FileState State { get; init; }
     public string? ParseError { get; init; }
+
+    /// <summary>
+    /// The file a restore should offer first: one that exists and differs from the version.
+    /// A deleted copy is the last resort, since restoring would bring it back instead of fixing the real file.
+    /// </summary>
+    public static TrackedFile? PickRestoreTarget(IReadOnlyList<TrackedFile> files, long versionId) =>
+        files.Where(f => f.State != FileState.Missing).FirstOrDefault(f => f.VersionId != versionId)
+        ?? files.FirstOrDefault(f => f.State != FileState.Missing)
+        ?? files.FirstOrDefault();
 }
 
 public sealed class SongSummary
@@ -75,12 +84,24 @@ public sealed class SongVersion
     public string LyricsFingerprint { get; init; } = "";
     public string FileModifiedAt { get; init; } = "";
     public string DetectedAt { get; init; } = "";
+    public string? Label { get; init; }
+}
+
+public sealed class StatusRecord
+{
+    public string StatusName { get; init; } = "";
+    public long? VersionId { get; init; }
+    public string CreatedAt { get; init; } = "";
+
+    public SongStatus Status => Enum.TryParse<SongStatus>(StatusName, out var status) ? status : SongStatus.Draft;
 }
 
 /// <summary>The app's own store. User TTML files are never written to.</summary>
 public sealed class LibraryDatabase
 {
-    private const int SchemaVersion = 3;
+    private const int SchemaVersion = 4;
+
+    private const string SchemaV4 = "ALTER TABLE version ADD COLUMN label TEXT;";
 
     // User edits live apart from file metadata, so scans can never overwrite them.
     private const string SchemaV3 =
@@ -163,8 +184,13 @@ public sealed class LibraryDatabase
 
     private readonly string _connectionString;
 
+    /// <summary>Folder that holds the database, for the app's own files.</summary>
+    public string DataDirectory { get; }
+
     public LibraryDatabase(string databasePath)
     {
+        DataDirectory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(databasePath))!;
+
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,
@@ -193,7 +219,12 @@ public sealed class LibraryDatabase
                 connection.Execute(SchemaV2, transaction: transaction);
             }
 
-            connection.Execute(SchemaV3, transaction: transaction);
+            if (version < 3)
+            {
+                connection.Execute(SchemaV3, transaction: transaction);
+            }
+
+            connection.Execute(SchemaV4, transaction: transaction);
 
             // Runs after all DDL because it uses the current song columns.
             if (version < 2)
@@ -462,8 +493,27 @@ public sealed class LibraryDatabase
         return connection.Query<SongVersion>(
             """
             SELECT id, song_id AS SongId, sha256 AS Sha256, lyrics_fingerprint AS LyricsFingerprint,
-                   file_modified_at AS FileModifiedAt, detected_at AS DetectedAt
+                   file_modified_at AS FileModifiedAt, detected_at AS DetectedAt, label
             FROM version WHERE song_id = @songId ORDER BY id
+            """,
+            new { songId }).ToList();
+    }
+
+    public void SetVersionLabel(long versionId, string? label)
+    {
+        using var connection = Open();
+        connection.Execute(
+            "UPDATE version SET label = @label WHERE id = @versionId",
+            new { versionId, label = NullIfBlank(label) });
+    }
+
+    public IReadOnlyList<StatusRecord> GetStatusHistory(long songId)
+    {
+        using var connection = Open();
+        return connection.Query<StatusRecord>(
+            """
+            SELECT status AS StatusName, version_id AS VersionId, created_at AS CreatedAt
+            FROM status_event WHERE song_id = @songId ORDER BY id
             """,
             new { songId }).ToList();
     }

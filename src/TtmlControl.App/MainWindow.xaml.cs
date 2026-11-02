@@ -11,6 +11,9 @@ namespace TtmlControl.App;
 
 public sealed partial class MainWindow : Window
 {
+    private readonly LibraryWatcher _watcher = new(TimeSpan.FromSeconds(1.5));
+    private readonly DispatcherTimer _safetyScanTimer = new() { Interval = TimeSpan.FromMinutes(10) };
+    private readonly Dictionary<long, HistoryWindow> _historyWindows = [];
     private bool _restoringSelection;
     private string? _selectedFilePath;
 
@@ -21,6 +24,10 @@ public sealed partial class MainWindow : Window
         ViewModel = viewModel;
         InitializeComponent();
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        _watcher.Changed += () => DispatcherQueue.TryEnqueue(() => _ = AutoScanAsync());
+        _safetyScanTimer.Tick += (_, _) => _ = AutoScanAsync();
+        _safetyScanTimer.Start();
+        Closed += MainWindow_Closed;
         _ = StartAsync();
     }
 
@@ -29,10 +36,53 @@ public sealed partial class MainWindow : Window
     private async Task StartAsync()
     {
         await Refresh(ViewModel.LoadAsync);
+        _watcher.SetRoots(ViewModel.GetRoots());
         if (ViewModel.HasRoots)
         {
             await Refresh(ViewModel.ScanAsync);
         }
+    }
+
+    private async Task AutoScanAsync()
+    {
+        // Watchers are rebuilt too: a root that was offline may be back, and the OS can drop them silently.
+        _watcher.SetRoots(ViewModel.GetRoots());
+        await Refresh(ViewModel.AutoScanAsync);
+        foreach (var window in _historyWindows.Values.ToList())
+        {
+            window.Reload();
+        }
+    }
+
+    private void MainWindow_Closed(object sender, WindowEventArgs args)
+    {
+        _safetyScanTimer.Stop();
+        _watcher.Dispose();
+
+        // Open secondary windows would otherwise keep the process alive.
+        foreach (var window in _historyWindows.Values.ToList())
+        {
+            window.Close();
+        }
+    }
+
+    private void History_Click(object sender, RoutedEventArgs e)
+    {
+        if (SongList.SelectedItems.OfType<SongRow>().FirstOrDefault() is not { } row)
+        {
+            return;
+        }
+
+        if (_historyWindows.TryGetValue(row.Id, out var existing))
+        {
+            existing.Activate();
+            return;
+        }
+
+        var window = new HistoryWindow(ViewModel, row.Id, () => Refresh(() => Task.CompletedTask));
+        window.Closed += (_, _) => _historyWindows.Remove(row.Id);
+        _historyWindows[row.Id] = window;
+        window.Activate();
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -53,7 +103,16 @@ public sealed partial class MainWindow : Window
             await operation();
             foreach (var row in ViewModel.Songs.Where(r => selected.Contains(r.Id)))
             {
-                SongList.SelectedItems.Add(row);
+                if (!SongList.SelectedItems.Contains(row))
+                {
+                    SongList.SelectedItems.Add(row);
+                }
+            }
+
+            // Rebuilding the rows sends the list back to the top.
+            if (SongList.SelectedItems.FirstOrDefault() is { } first)
+            {
+                SongList.ScrollIntoView(first);
             }
         }
         catch (Exception ex)
@@ -103,6 +162,7 @@ public sealed partial class MainWindow : Window
         if (await PickFolderAsync() is { } path)
         {
             await Refresh(() => ViewModel.AddRootAndScanAsync(path));
+            _watcher.SetRoots(ViewModel.GetRoots());
         }
     }
 
@@ -151,6 +211,7 @@ public sealed partial class MainWindow : Window
             CloseButtonText = "Cerrar",
         };
         await dialog.ShowAsync();
+        _watcher.SetRoots(ViewModel.GetRoots());
         await Refresh(ViewModel.ScanAsync);
     }
 
@@ -260,7 +321,7 @@ public sealed partial class MainWindow : Window
         {
             DetailTitle.Text = $"{rows.Count} canciones seleccionadas";
             DetailMetadata.Text = DetailFiles.Text = DetailLyrics.Text = "";
-            EditButton.IsEnabled = OpenFileButton.IsEnabled = ShowFileButton.IsEnabled = false;
+            HistoryButton.IsEnabled = EditButton.IsEnabled = OpenFileButton.IsEnabled = ShowFileButton.IsEnabled = false;
             return;
         }
 
@@ -271,7 +332,7 @@ public sealed partial class MainWindow : Window
 
         var row = rows[0];
         var song = row.Song;
-        EditButton.IsEnabled = true;
+        HistoryButton.IsEnabled = EditButton.IsEnabled = true;
         DetailTitle.Text = row.Title;
         DetailMetadata.Text = string.Join('\n', new[]
         {

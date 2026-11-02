@@ -13,7 +13,8 @@ public sealed record TtmlLine(
     TimeSpan? End,
     string? Agent,
     string Text,
-    string BackgroundText);
+    string BackgroundText,
+    string TimingSignature);
 
 public sealed record TtmlDocument(
     string? Title,

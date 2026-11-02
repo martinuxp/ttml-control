@@ -63,6 +63,8 @@ public partial class MainViewModel(LibraryDatabase database) : ObservableObject
     private readonly LibraryScanner _scanner = new(database);
     private IReadOnlyList<SongSummary> _allSongs = [];
     private CancellationTokenSource? _scanCancellation;
+    private bool _autoScanRunning;
+    private bool _autoScanPending;
 
     public ObservableCollection<SongRow> Songs { get; } = [];
 
@@ -91,6 +93,23 @@ public partial class MainViewModel(LibraryDatabase database) : ObservableObject
     public void AddExclusion(string path) => database.AddExclusion(path);
 
     public void RemoveExclusion(string path) => database.RemoveExclusion(path);
+
+    public SongSummary? GetSong(long songId) => database.GetSongs().FirstOrDefault(s => s.Id == songId);
+
+    public IReadOnlyList<SongVersion> GetVersions(long songId) => database.GetVersions(songId);
+
+    public IReadOnlyList<StatusRecord> GetStatusHistory(long songId) => database.GetStatusHistory(songId);
+
+    public byte[] GetVersionContent(long versionId) => database.GetVersionContent(versionId);
+
+    public void SetVersionLabel(long versionId, string label) => database.SetVersionLabel(versionId, label);
+
+    public async Task<RestoreResult> RestoreAsync(long versionId, string path)
+    {
+        var result = await _scanner.RestoreAsync(versionId, path);
+        await LoadAsync();
+        return result;
+    }
 
     public async Task SetIdentityAsync(long songId, string title, string artists)
     {
@@ -170,6 +189,40 @@ public partial class MainViewModel(LibraryDatabase database) : ObservableObject
     }
 
     public void CancelScan() => _scanCancellation?.Cancel();
+
+    /// <summary>Scan started by live detection: no progress UI, and the rows only rebuild if something changed.</summary>
+    public async Task AutoScanAsync()
+    {
+        if (IsScanning || _autoScanRunning)
+        {
+            _autoScanPending = true;
+            return;
+        }
+
+        _autoScanRunning = true;
+        try
+        {
+            do
+            {
+                _autoScanPending = false;
+                var result = await _scanner.ScanAsync();
+                if (result.HasChanges)
+                {
+                    await LoadAsync();
+                    var description = Describe(result);
+                    if (description.Length > 0)
+                    {
+                        Message = description;
+                    }
+                }
+            }
+            while (_autoScanPending);
+        }
+        finally
+        {
+            _autoScanRunning = false;
+        }
+    }
 
     public async Task ScanAsync()
     {

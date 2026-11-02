@@ -16,9 +16,15 @@ public sealed class ScanResult
     public int Moved { get; internal set; }
     public int Missing { get; internal set; }
     public int Invalid { get; internal set; }
+    public int Updated { get; internal set; }
     public List<string> UnavailableRoots { get; } = [];
     public List<(string Path, string Error)> Errors { get; } = [];
+
+    public bool HasChanges => NewFiles + NewSongs + NewVersions + Moved + Missing + Invalid + Updated > 0;
 }
+
+/// <param name="BackupPath">Copy of a file replaced while corrupt, which could not be kept as a version.</param>
+public sealed record RestoreResult(string? BackupPath);
 
 public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeProvider = null)
 {
@@ -35,8 +41,94 @@ public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeP
 
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
-    public Task<ScanResult> ScanAsync(IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default) =>
-        Task.Run(() => Scan(progress, cancellationToken), cancellationToken);
+    // Live detection can start a scan at any time; two at once could insert the same file twice.
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public async Task<ScanResult> ScanAsync(IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await Task.Run(() => Scan(progress, cancellationToken), cancellationToken);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>Writes a stored version over a file, keeping the file's current content in the history first.</summary>
+    public async Task<RestoreResult> RestoreAsync(long versionId, string targetPath)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            return await Task.Run(() => Restore(versionId, targetPath));
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private RestoreResult Restore(long versionId, string targetPath)
+    {
+        using var connection = database.Open();
+        var version = connection.Query<(long SongId, string Sha256, byte[] Content)>(
+            "SELECT song_id, sha256, content FROM version WHERE id = @versionId", new { versionId }).FirstOrDefault();
+        if (version.Content is null)
+        {
+            throw new InvalidOperationException("La versión no existe.");
+        }
+
+        var file = LibraryDatabase.FindFile(connection, targetPath);
+        if (file is null || file.SongId != version.SongId || file.State == FileState.Excluded)
+        {
+            throw new InvalidOperationException("El archivo no pertenece a esta canción.");
+        }
+
+        var bytes = VersionContent.Decompress(version.Content);
+        if (Convert.ToHexStringLower(SHA256.HashData(bytes)) != version.Sha256)
+        {
+            throw new InvalidOperationException("La versión guardada está dañada; no se restauró.");
+        }
+
+        string? backupPath = null;
+        if (File.Exists(targetPath))
+        {
+            // Picks up edits made since the last scan, so restoring never discards them.
+            ProcessFile(connection, targetPath, new ScanResult());
+            if (LibraryDatabase.FindFile(connection, targetPath)!.State == FileState.Invalid)
+            {
+                backupPath = BackUpCorruptFile(targetPath);
+            }
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        var temporary = targetPath + ".restoring";
+        try
+        {
+            // Written aside and moved, so a failure cannot leave a half-written TTML.
+            File.WriteAllBytes(temporary, bytes);
+            File.Move(temporary, targetPath, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(temporary);
+        }
+
+        ProcessFile(connection, targetPath, new ScanResult());
+        return new RestoreResult(backupPath);
+    }
+
+    private string BackUpCorruptFile(string path)
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(database.DataDirectory, "backups")).FullName;
+        var stamp = _time.GetUtcNow().UtcDateTime.ToString("yyyyMMdd-HHmmss-fff");
+        var backup = Path.Combine(folder, $"{stamp} {Path.GetFileName(path)}");
+        File.Copy(path, backup);
+        return backup;
+    }
 
     private ScanResult Scan(IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
     {
@@ -184,6 +276,10 @@ public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeP
             if (moved is not null)
             {
                 result.Moved++;
+            }
+            else
+            {
+                result.Updated++;
             }
         }
 

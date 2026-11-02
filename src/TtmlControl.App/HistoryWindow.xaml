@@ -1,0 +1,101 @@
+<Window
+    x:Class="TtmlControl.App.HistoryWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:TtmlControl.App">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid Padding="16" ColumnSpacing="16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="320" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Grid RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="SongTitle" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" />
+            <ListView
+                x:Name="VersionList"
+                Grid.Row="1"
+                SelectionChanged="VersionList_SelectionChanged"
+                SelectionMode="Single">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="local:VersionItem">
+                        <StackPanel Padding="0,8" Spacing="2">
+                            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{x:Bind Date}" />
+                            <TextBlock FontSize="12" Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="{x:Bind Badges}" TextWrapping="Wrap" Visibility="{x:Bind HasBadges}" />
+                            <TextBlock FontSize="12" Text="{x:Bind Label}" TextWrapping="Wrap" Visibility="{x:Bind HasLabel}" />
+                            <TextBlock FontSize="12" Opacity="0.75" Text="{x:Bind Summary}" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+                <Button x:Name="LabelButton" Content="Etiquetar" IsEnabled="False" Click="Label_Click" />
+                <Button x:Name="RestoreButton" Content="Restaurar esta versión" IsEnabled="False" Click="Restore_Click" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Column="1" RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <ComboBox x:Name="CompareBox" MinWidth="220" SelectedIndex="0" SelectionChanged="DiffOption_Changed">
+                    <ComboBoxItem Content="Comparar con la versión anterior" />
+                    <ComboBoxItem Content="Comparar con la versión actual" />
+                </ComboBox>
+                <ToggleButton x:Name="ShowLyrics" Content="Letra" IsChecked="True" Click="DiffOption_Changed" />
+                <ToggleButton x:Name="ShowTimings" Content="Tiempos" IsChecked="True" Click="DiffOption_Changed" />
+                <ToggleButton x:Name="ShowUnchanged" Content="Sin cambios" Click="DiffOption_Changed" />
+            </StackPanel>
+
+            <TextBlock x:Name="DiffSummary" Grid.Row="1" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+            <TextBlock x:Name="MetadataSummary" Grid.Row="2" FontSize="12" TextWrapping="Wrap" />
+
+            <Grid Grid.Row="3" Padding="16,0,12,0" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="1" x:Name="OldHeader" Style="{StaticResource CaptionTextBlockStyle}" />
+                <TextBlock Grid.Column="2" x:Name="NewHeader" Style="{StaticResource CaptionTextBlockStyle}" />
+            </Grid>
+
+            <ListView x:Name="DiffList" Grid.Row="4" SelectionMode="None">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="local:DiffRow">
+                        <Grid Padding="0,4" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock FontSize="12" Foreground="{x:Bind Brush}" Text="{x:Bind Kind}" />
+                            <StackPanel Grid.Column="1">
+                                <TextBlock FontSize="11" Opacity="0.7" Text="{x:Bind OldTime}" />
+                                <TextBlock Text="{x:Bind OldText}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock FontSize="11" Opacity="0.7" Text="{x:Bind NewTime}" />
+                                <TextBlock Text="{x:Bind NewText}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+    </Grid>
+</Window>

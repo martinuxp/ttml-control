@@ -136,6 +136,7 @@
                 <StackPanel x:Name="DetailPanel" Spacing="10" Visibility="Collapsed">
                     <TextBlock x:Name="DetailTitle" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                     <TextBlock x:Name="DetailMetadata" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                    <Button x:Name="HistoryButton" HorizontalAlignment="Stretch" Content="Historial de versiones" Click="History_Click" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button x:Name="EditButton" Content="Editar datos" Click="EditIdentity_Click" />
                         <Button x:Name="OpenFileButton" Content="Abrir" Click="OpenFile_Click" />

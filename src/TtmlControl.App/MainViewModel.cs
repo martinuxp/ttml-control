@@ -82,6 +82,22 @@ public partial class MainViewModel(LibraryDatabase database) : ObservableObject
 
     public string GetLyrics(long songId) => database.GetLyrics(songId);
 
+    public IReadOnlyList<string> GetRoots() => database.GetRoots();
+
+    public IReadOnlyList<string> GetExclusions() => database.GetExclusions();
+
+    public void RemoveRoot(string path) => database.RemoveRoot(path);
+
+    public void AddExclusion(string path) => database.AddExclusion(path);
+
+    public void RemoveExclusion(string path) => database.RemoveExclusion(path);
+
+    public async Task SetIdentityAsync(long songId, string title, string artists)
+    {
+        await Task.Run(() => database.SetIdentity(songId, title, artists));
+        await LoadAsync();
+    }
+
     public async Task LoadAsync()
     {
         _allSongs = await Task.Run(database.GetSongs);
@@ -190,21 +206,21 @@ public partial class MainViewModel(LibraryDatabase database) : ObservableObject
     private static string Describe(ScanResult result)
     {
         var parts = new List<string>();
-        void Add(int count, string label)
+        void Add(int count, string singular, string plural)
         {
             if (count > 0)
             {
-                parts.Add($"{count} {label}");
+                parts.Add($"{count} {(count == 1 ? singular : plural)}");
             }
         }
 
-        Add(result.NewSongs, "canciones nuevas");
-        Add(result.NewVersions, "versiones nuevas");
-        Add(result.Moved, "movidos");
-        Add(result.Missing, "faltantes");
-        Add(result.Invalid, "con errores");
-        Add(result.Errors.Count, "sin poder leer");
-        Add(result.UnavailableRoots.Count, "carpetas no disponibles");
+        Add(result.NewSongs, "canción nueva", "canciones nuevas");
+        Add(result.NewVersions, "versión nueva", "versiones nuevas");
+        Add(result.Moved, "archivo movido", "archivos movidos");
+        Add(result.Missing, "archivo faltante", "archivos faltantes");
+        Add(result.Invalid, "archivo con errores", "archivos con errores");
+        Add(result.Errors.Count, "archivo sin poder leer", "archivos sin poder leer");
+        Add(result.UnavailableRoots.Count, "carpeta no disponible", "carpetas no disponibles");
         return parts.Count == 0 ? "" : "Escaneo: " + string.Join(", ", parts) + ".";
     }
 }

@@ -1,9 +1,18 @@
 <Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
   <Folder Name="/src/">
-    <Project Path="src/TtmlControl.App/TtmlControl.App.csproj" />
-    <Project Path="src/TtmlControl.Core/TtmlControl.Core.csproj" />
+    <Project Path="src/TtmlControl.App/TtmlControl.App.csproj">
+      <Platform Solution="Debug|*" Project="x64" />
+    </Project>
+    <Project Path="src/TtmlControl.Core/TtmlControl.Core.csproj">
+      <Platform Solution="Debug|*" Project="x64" />
+    </Project>
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/TtmlControl.Tests/TtmlControl.Tests.csproj" />
+    <Project Path="tests/TtmlControl.Tests/TtmlControl.Tests.csproj">
+      <Platform Solution="Debug|*" Project="x64" />
+    </Project>
   </Folder>
 </Solution>

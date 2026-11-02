@@ -23,6 +23,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <AutoSuggestBox
                 x:Name="SearchBox"
@@ -50,7 +51,8 @@
                 </DropDownButton.Flyout>
             </DropDownButton>
             <Button Grid.Column="3" Content="Añadir carpeta" Click="AddFolder_Click" />
-            <Button x:Name="ScanButton" Grid.Column="4" Content="Escanear" Style="{StaticResource AccentButtonStyle}" Click="Scan_Click" />
+            <Button Grid.Column="4" Content="Carpetas" Click="ManageFolders_Click" />
+            <Button x:Name="ScanButton" Grid.Column="5" Content="Escanear" Style="{StaticResource AccentButtonStyle}" Click="Scan_Click" />
         </Grid>
 
         <InfoBar
@@ -135,6 +137,7 @@
                     <TextBlock x:Name="DetailTitle" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                     <TextBlock x:Name="DetailMetadata" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="EditButton" Content="Editar datos" Click="EditIdentity_Click" />
                         <Button x:Name="OpenFileButton" Content="Abrir" Click="OpenFile_Click" />
                         <Button x:Name="ShowFileButton" Content="Mostrar en carpeta" Click="ShowFile_Click" />
                     </StackPanel>

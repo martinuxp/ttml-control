@@ -126,6 +126,8 @@ public sealed class LibraryStatusAndSearchTests : IDisposable
                 INSERT INTO song (id, file_name_hint, created_at) VALUES (1, 'old', 'x');
                 INSERT INTO version (song_id, sha256, content, lyrics_fingerprint, file_modified_at, detected_at)
                 VALUES (1, 'h', $content, 'f', 'x', 'x');
+                INSERT INTO ttml_file (path, song_id, version_id, size, modified_ticks, state, first_seen_at)
+                VALUES ('C:\old.ttml', 1, 1, 1, 1, 0, 'x');
                 PRAGMA user_version = 1;
                 """;
             command.Parameters.AddWithValue("$content", content);

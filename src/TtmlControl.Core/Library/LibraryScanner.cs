@@ -22,6 +22,8 @@ public sealed class ScanResult
 
 public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeProvider = null)
 {
+    private const int ProgressInterval = 25;
+
     private static readonly EnumerationOptions Enumeration = new()
     {
         RecurseSubdirectories = true,
@@ -40,6 +42,8 @@ public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeP
     {
         var result = new ScanResult();
         var processed = 0;
+        var exclusions = database.GetExclusions();
+        using var connection = database.Open();
 
         foreach (var root in database.GetRoots())
         {
@@ -53,10 +57,20 @@ public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeP
             foreach (var path in Directory.EnumerateFiles(root, "*.ttml", Enumeration))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                progress?.Report(new ScanProgress(++processed, path));
+                if (exclusions.Any(e => LibraryPaths.IsUnder(path, e)))
+                {
+                    continue;
+                }
+
+                // Every file would flood the UI thread on large libraries.
+                if (++processed % ProgressInterval == 1)
+                {
+                    progress?.Report(new ScanProgress(processed, path));
+                }
+
                 try
                 {
-                    ProcessFile(path, result);
+                    ProcessFile(connection, path, result);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -65,21 +79,20 @@ public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeP
                 }
             }
 
-            MarkMissing(root, result);
+            MarkMissing(connection, root, result);
         }
 
         return result;
     }
 
-    private void ProcessFile(string path, ScanResult result)
+    private void ProcessFile(SqliteConnection connection, string path, ScanResult result)
     {
-        using var connection = database.Open();
         var info = new FileInfo(path);
         var size = info.Length;
         var modified = info.LastWriteTimeUtc;
 
         var existing = LibraryDatabase.FindFile(connection, path);
-        if (existing is { State: not FileState.Missing } && existing.Size == size && existing.ModifiedTicks == modified.Ticks)
+        if (existing is { State: FileState.Present or FileState.Invalid } && existing.Size == size && existing.ModifiedTicks == modified.Ticks)
         {
             result.Unchanged++;
             return;
@@ -221,14 +234,12 @@ public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeP
             new { sha256, fingerprint },
             transaction);
 
-    private void MarkMissing(string root, ScanResult result)
+    private static void MarkMissing(SqliteConnection connection, string root, ScanResult result)
     {
-        var prefix = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
-        using var connection = database.Open();
-        var tracked = connection.Query<(long Id, string Path)>("SELECT id, path FROM ttml_file WHERE state <> 1");
+        var tracked = connection.Query<(long Id, string Path)>("SELECT id, path FROM ttml_file WHERE state IN (0, 2)").ToList();
         foreach (var (id, path) in tracked)
         {
-            if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && !File.Exists(path))
+            if (LibraryPaths.IsUnder(path, root) && !File.Exists(path))
             {
                 connection.Execute("UPDATE ttml_file SET state = 1 WHERE id = @id", new { id });
                 result.Missing++;

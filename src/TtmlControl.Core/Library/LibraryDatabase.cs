@@ -11,6 +11,9 @@ public enum FileState
     Present = 0,
     Missing = 1,
     Invalid = 2,
+
+    /// <summary>Outside the scanned folders. Hidden, but its song and history are kept.</summary>
+    Excluded = 3,
 }
 
 public enum SongStatus
@@ -77,7 +80,18 @@ public sealed class SongVersion
 /// <summary>The app's own store. User TTML files are never written to.</summary>
 public sealed class LibraryDatabase
 {
-    private const int SchemaVersion = 2;
+    private const int SchemaVersion = 3;
+
+    // User edits live apart from file metadata, so scans can never overwrite them.
+    private const string SchemaV3 =
+        """
+        ALTER TABLE song ADD COLUMN user_title TEXT;
+        ALTER TABLE song ADD COLUMN user_artists TEXT;
+        CREATE TABLE scan_exclusion (
+            id INTEGER PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE COLLATE NOCASE
+        );
+        """;
 
     // Trigram tokenizing gives substring search for any script, including Japanese.
     private const string SchemaV2 =
@@ -174,8 +188,19 @@ public sealed class LibraryDatabase
                 connection.Execute(SchemaV1, transaction: transaction);
             }
 
-            connection.Execute(SchemaV2, transaction: transaction);
-            BackfillSongs(connection, transaction);
+            if (version < 2)
+            {
+                connection.Execute(SchemaV2, transaction: transaction);
+            }
+
+            connection.Execute(SchemaV3, transaction: transaction);
+
+            // Runs after all DDL because it uses the current song columns.
+            if (version < 2)
+            {
+                BackfillSongs(connection, transaction);
+            }
+
             connection.Execute($"PRAGMA user_version = {SchemaVersion}", transaction: transaction);
             transaction.Commit();
         }
@@ -223,11 +248,15 @@ public sealed class LibraryDatabase
             },
             transaction);
 
+        RebuildSearch(connection, songId, string.Join('\n', document.Lines.Select(l => l.Text)), transaction);
+    }
+
+    private static void RebuildSearch(SqliteConnection connection, long songId, string lyrics, SqliteTransaction transaction)
+    {
         connection.Execute("DELETE FROM song_search WHERE song_id = @songId", new { songId }, transaction);
-        var lyrics = string.Join('\n', document.Lines.Select(l => l.Text));
         var metadata = connection.QuerySingle<string>(
             """
-            SELECT concat_ws(char(10), title, artists, album, isrc, songwriters, file_name_hint)
+            SELECT concat_ws(char(10), user_title, user_artists, title, artists, album, isrc, songwriters, file_name_hint)
             FROM song WHERE id = @songId
             """,
             new { songId },
@@ -254,6 +283,23 @@ public sealed class LibraryDatabase
     }
 
     private static string? JoinOrNull(IReadOnlyList<string> values) => values.Count == 0 ? null : string.Join(", ", values);
+
+    /// <summary>Sets what the app shows for a song. A blank value goes back to the file's metadata.</summary>
+    public void SetIdentity(long songId, string? title, string? artists)
+    {
+        using var connection = Open();
+        using var transaction = connection.BeginTransaction();
+        connection.Execute(
+            "UPDATE song SET user_title = @title, user_artists = @artists WHERE id = @songId",
+            new { songId, title = NullIfBlank(title), artists = NullIfBlank(artists) },
+            transaction);
+        var lyrics = connection.QuerySingleOrDefault<string>(
+            "SELECT lyrics FROM song_search WHERE song_id = @songId", new { songId }, transaction) ?? "";
+        RebuildSearch(connection, songId, lyrics, transaction);
+        transaction.Commit();
+    }
+
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     public void SetStatus(IEnumerable<long> songIds, SongStatus status)
     {
@@ -299,14 +345,14 @@ public sealed class LibraryDatabase
     public IReadOnlyList<TrackedFile> GetFiles(long songId)
     {
         using var connection = Open();
-        return connection.Query<TrackedFile>(FileSelect + " WHERE f.song_id = @songId ORDER BY f.path", new { songId }).ToList();
+        return connection.Query<TrackedFile>(FileSelect + " WHERE f.song_id = @songId AND f.state <> 3 ORDER BY f.path", new { songId }).ToList();
     }
 
     private static string CurrentVersionSql(string songId) =>
         $"""
         COALESCE(
             (SELECT f.version_id FROM ttml_file f
-             WHERE f.song_id = {songId} AND f.state <> 1 AND f.version_id IS NOT NULL
+             WHERE f.song_id = {songId} AND f.state IN (0, 2) AND f.version_id IS NOT NULL
              ORDER BY f.modified_ticks DESC LIMIT 1),
             (SELECT MAX(v.id) FROM version v WHERE v.song_id = {songId}))
         """;
@@ -315,6 +361,9 @@ public sealed class LibraryDatabase
     {
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
+
+        // With WAL this stays consistent after a crash and avoids an fsync per transaction.
+        connection.Execute("PRAGMA synchronous = NORMAL");
         return connection;
     }
 
@@ -324,6 +373,60 @@ public sealed class LibraryDatabase
         connection.Execute(
             "INSERT INTO scan_root (path) VALUES (@path) ON CONFLICT (path) DO NOTHING",
             new { path = System.IO.Path.GetFullPath(path) });
+        SyncFileVisibility(connection);
+    }
+
+    public void RemoveRoot(string path)
+    {
+        using var connection = Open();
+        connection.Execute("DELETE FROM scan_root WHERE path = @path", new { path });
+        SyncFileVisibility(connection);
+    }
+
+    public IReadOnlyList<string> GetExclusions()
+    {
+        using var connection = Open();
+        return connection.Query<string>("SELECT path FROM scan_exclusion ORDER BY path").ToList();
+    }
+
+    public void AddExclusion(string path)
+    {
+        using var connection = Open();
+        connection.Execute(
+            "INSERT INTO scan_exclusion (path) VALUES (@path) ON CONFLICT (path) DO NOTHING",
+            new { path = System.IO.Path.GetFullPath(path) });
+        SyncFileVisibility(connection);
+    }
+
+    public void RemoveExclusion(string path)
+    {
+        using var connection = Open();
+        connection.Execute("DELETE FROM scan_exclusion WHERE path = @path", new { path });
+        SyncFileVisibility(connection);
+    }
+
+    private static void SyncFileVisibility(SqliteConnection connection)
+    {
+        var roots = connection.Query<string>("SELECT path FROM scan_root").ToList();
+        var exclusions = connection.Query<string>("SELECT path FROM scan_exclusion").ToList();
+        var files = connection.Query<(long Id, string Path, long State)>("SELECT id, path, state FROM ttml_file").ToList();
+
+        using var transaction = connection.BeginTransaction();
+        foreach (var (id, path, state) in files)
+        {
+            var hidden = !roots.Any(r => LibraryPaths.IsUnder(path, r)) || exclusions.Any(e => LibraryPaths.IsUnder(path, e));
+            if (hidden && state != (long)FileState.Excluded)
+            {
+                connection.Execute("UPDATE ttml_file SET state = 3 WHERE id = @id", new { id }, transaction);
+            }
+            else if (!hidden && state == (long)FileState.Excluded)
+            {
+                // Missing until the next scan confirms the file and records any edits.
+                connection.Execute("UPDATE ttml_file SET state = 1 WHERE id = @id", new { id }, transaction);
+            }
+        }
+
+        transaction.Commit();
     }
 
     public IReadOnlyList<string> GetRoots()
@@ -337,9 +440,9 @@ public sealed class LibraryDatabase
         using var connection = Open();
         return connection.Query<SongSummary>(
             $"""
-            SELECT s.id, s.title, s.artists, s.album, s.isrc, s.songwriters, s.file_name_hint AS FileNameHint,
+            SELECT s.id, COALESCE(s.user_title, s.title) AS title, COALESCE(s.user_artists, s.artists) AS artists, s.album, s.isrc, s.songwriters, s.file_name_hint AS FileNameHint,
                    (SELECT COUNT(*) FROM version v WHERE v.song_id = s.id) AS VersionCount,
-                   (SELECT COUNT(*) FROM ttml_file f WHERE f.song_id = s.id AND f.state <> 1) AS FileCount,
+                   (SELECT COUNT(*) FROM ttml_file f WHERE f.song_id = s.id AND f.state IN (0, 2)) AS FileCount,
                    (SELECT MAX(v.file_modified_at) FROM version v WHERE v.song_id = s.id) AS LastEditedAt,
                    s.timing, s.duration_ms AS DurationMs, s.line_count AS LineCount,
                    (SELECT COUNT(*) FROM ttml_file f WHERE f.song_id = s.id AND f.state = 2) AS InvalidFileCount,
@@ -348,7 +451,8 @@ public sealed class LibraryDatabase
                    (SELECT e.version_id FROM status_event e WHERE e.song_id = s.id ORDER BY e.id DESC LIMIT 1) AS StatusVersionId,
                    {CurrentVersionSql("s.id")} AS CurrentVersionId
             FROM song s
-            ORDER BY COALESCE(s.title, s.file_name_hint) COLLATE NOCASE
+            WHERE EXISTS (SELECT 1 FROM ttml_file f WHERE f.song_id = s.id AND f.state <> 3)
+            ORDER BY COALESCE(s.user_title, s.title, s.file_name_hint) COLLATE NOCASE
             """).ToList();
     }
 

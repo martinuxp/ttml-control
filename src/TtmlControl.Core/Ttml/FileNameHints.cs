@@ -8,9 +8,11 @@ namespace TtmlControl.Core.Ttml;
 /// </summary>
 public sealed partial record FileNameHints(string CleanName, IReadOnlyList<string> Parts)
 {
-    public static FileNameHints FromPath(string path)
+    public static FileNameHints FromPath(string path) => FromName(Path.GetFileNameWithoutExtension(path));
+
+    public static FileNameHints FromName(string fileName)
     {
-        var name = CopySuffix().Replace(Path.GetFileNameWithoutExtension(path), "").Trim();
+        var name = CopySuffix().Replace(fileName, "").Trim();
         var parts = name.Split(" - ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return new FileNameHints(name, parts);
     }

@@ -142,8 +142,9 @@ public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeP
                 },
                 transaction);
             result.NewVersions++;
-            UpdateSongMetadata(connection, songId.Value, document, transaction);
         }
+
+        LibraryDatabase.ApplyDocument(connection, songId.Value, document, transaction);
 
         if (tracked is null)
         {
@@ -220,31 +221,6 @@ public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeP
             new { sha256, fingerprint },
             transaction);
 
-    private static void UpdateSongMetadata(SqliteConnection connection, long songId, TtmlDocument document, SqliteTransaction transaction)
-    {
-        // A version without a field must not erase what an earlier one provided.
-        connection.Execute(
-            """
-            UPDATE song
-            SET title = COALESCE(@title, title),
-                artists = COALESCE(@artists, artists),
-                album = COALESCE(@album, album),
-                isrc = COALESCE(@isrc, isrc),
-                songwriters = COALESCE(@songwriters, songwriters)
-            WHERE id = @songId
-            """,
-            new
-            {
-                songId,
-                title = document.Title,
-                artists = JoinOrNull(document.Artists),
-                album = document.Album,
-                isrc = document.Isrc,
-                songwriters = JoinOrNull(document.Songwriters),
-            },
-            transaction);
-    }
-
     private void MarkMissing(string root, ScanResult result)
     {
         var prefix = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
@@ -259,8 +235,6 @@ public sealed class LibraryScanner(LibraryDatabase database, TimeProvider? timeP
             }
         }
     }
-
-    private static string? JoinOrNull(IReadOnlyList<string> values) => values.Count == 0 ? null : string.Join(", ", values);
 
     private static string Timestamp(DateTimeOffset value) => value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
 }
